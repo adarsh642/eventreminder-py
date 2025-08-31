@@ -4,6 +4,7 @@ import datetime
 from datetime import date, timedelta
 import calendar
 import mysql.connector
+import customtkinter as ctk
 
 class CalendarApp:
     def __init__(self, root):
@@ -14,7 +15,6 @@ class CalendarApp:
 
         # --- Database Connection and Setup (MySQL) ---
         try:
-            # Replace these with your MySQL Workbench credentials
             self.conn = mysql.connector.connect(
                 host="photostore.ct0go6um6tj0.ap-south-1.rds.amazonaws.com",
                 user="admin",
@@ -32,7 +32,7 @@ class CalendarApp:
         # --- Variables to hold form data and state ---
         self.event_title_var = tk.StringVar(value="Event Title")
         self.event_desc_var = tk.StringVar(value="Event Description")
-        self.event_time_var = tk.StringVar(value="00:00")
+        self.event_time_var = tk.StringVar(value=datetime.datetime.now().strftime("%H:%M"))
         self.event_date_var = tk.StringVar(value=datetime.date.today().strftime("%d %b, %Y"))
         self.reminder_var = tk.StringVar(value="No Reminder")
         self.search_var = tk.StringVar()
@@ -68,7 +68,6 @@ class CalendarApp:
     def setup_styles(self):
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure("TEntry", fieldbackground="white", bordercolor="#cccccc", relief="solid", borderwidth=1, padding=(10, 5))
         style.configure("TCombobox", fieldbackground="white", background="white", arrowcolor="#333333", bordercolor="#cccccc", relief="solid", borderwidth=1, padding=(10, 0))
         style.configure("Blue.TButton", background="#3366ff", foreground="white", borderwidth=0, font=("Arial", 12, "bold"), relief="flat", padding=(10, 8))
         style.map("Blue.TButton", background=[('active', '#5588ff')])
@@ -123,13 +122,11 @@ class CalendarApp:
         time_date_frame = tk.Frame(new_event_frame, bg="white")
         time_date_frame.pack(fill=tk.X, pady=5)
         
-        times = [f"{h:02d}:00" for h in range(24)]
-        self.time_combo = ttk.Combobox(time_date_frame, textvariable=self.event_time_var, values=times, state="readonly", font=("Arial", 10))
-        self.time_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.time_combo.set("00:00")
+        self.time_entry = ttk.Entry(time_date_frame, textvariable=self.event_time_var, font=("Arial", 10))
+        self.time_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         
-        self.date_combo = ttk.Combobox(time_date_frame, textvariable=self.event_date_var, values=[self.event_date_var.get()], state="readonly", font=("Arial", 10))
-        self.date_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.date_entry = ttk.Entry(time_date_frame, textvariable=self.event_date_var, font=("Arial", 10))
+        self.date_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
         reminder_values = ["No Reminder", "15 minutes before", "30 minutes before", "1 hour before", "1 day before"]
         self.reminder_combo = ttk.Combobox(new_event_frame, textvariable=self.reminder_var, values=reminder_values, state="readonly", font=("Arial", 10))
@@ -139,23 +136,33 @@ class CalendarApp:
         ttk.Button(new_event_frame, text="Create", style="Blue.TButton", command=self.create_event).pack(fill=tk.X, pady=(10, 0))
 
     def create_right_panel(self):
-        header_frame = tk.Frame(self.right_panel, bg="#e0eeef")
+        header_frame = tk.Frame(self.right_panel, bg="#e0eeef", bd=0)
         header_frame.pack(fill=tk.X, pady=(0, 10))
         
         header_frame.grid_columnconfigure(0, weight=0)
         header_frame.grid_columnconfigure(1, weight=1)
         header_frame.grid_columnconfigure(2, weight=0)
+        header_frame.grid_rowconfigure(0, weight=1)
 
         tk.Label(header_frame, text="My Events", font=("Arial", 16, "bold"), bg="#e0eeef", fg="#333333").grid(row=0, column=0, sticky="w")
         
-        search_bar_frame = tk.Frame(header_frame, bg="#e0e0e0", highlightbackground="#cccccc", highlightthickness=1, bd=0)
-        search_bar_frame.grid(row=0, column=1, sticky="ew", padx=(10, 10))
-        
-        self.search_entry = ttk.Entry(search_bar_frame, textvariable=self.search_var, font=("Arial", 10), style="TEntry")
-        self.search_entry.pack(fill=tk.X, expand=True, padx=2, pady=2)
+        self.search_entry = ctk.CTkEntry(
+            header_frame, 
+            textvariable=self.search_var, 
+            corner_radius=20, # Increased border radius
+            width=300, 
+            height=40, 
+            font=("Arial", 14), 
+            fg_color="white",
+            border_width=0,
+            text_color="#333333"
+        )
+        self.search_entry.grid(row=0, column=1, sticky="ew", padx=(10, 10))
         self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_event_list())
-
-        tk.Label(header_frame, text="💬", font=("Arial", 16), bg="#e0eeef", fg="#808080").grid(row=0, column=2, sticky="e")
+        self._setup_search_placeholder()
+        
+        # --- Bot Icon (text-based, compatible with all systems) ---
+        tk.Label(header_frame, text="🤖", font=("Arial", 24), bg="#e0eeef", fg="#808080").grid(row=0, column=2, sticky="e")
         
         event_list_container = tk.Frame(self.right_panel, bg="white", bd=0, highlightbackground="#e0e0e0", highlightthickness=1)
         event_list_container.pack(fill=tk.BOTH, expand=True)
@@ -167,13 +174,31 @@ class CalendarApp:
         self.event_list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         self.event_list_frame = tk.Frame(self.event_list_canvas, bg="white")
-        
         self.event_list_frame_id = self.event_list_canvas.create_window((0, 0), window=self.event_list_frame, anchor="nw")
-        self.event_list_canvas.bind('<Configure>', self._on_canvas_resize)
-
+        
         self.event_list_canvas.configure(yscrollcommand=self.event_list_scrollbar.set)
+        self.event_list_canvas.bind('<Configure>', self._on_canvas_resize)
         self.event_list_frame.bind("<Configure>", lambda e: self.event_list_canvas.configure(scrollregion=self.event_list_canvas.bbox("all")))
+
         self.event_list_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+    
+    def _setup_search_placeholder(self):
+        self.placeholder_text = "🔍  Search"
+        self.search_entry.insert(0, self.placeholder_text)
+        self.search_entry.configure(text_color="#a0a0a0")
+
+        def on_focus_in(event):
+            if self.search_entry.get() == self.placeholder_text:
+                self.search_entry.delete(0, "end")
+                self.search_entry.configure(text_color="#333333")
+
+        def on_focus_out(event):
+            if not self.search_entry.get():
+                self.search_entry.insert(0, self.placeholder_text)
+                self.search_entry.configure(text_color="#a0a0a0")
+
+        self.search_entry.bind("<FocusIn>", on_focus_in)
+        self.search_entry.bind("<FocusOut>", on_focus_out)
 
     def _on_canvas_resize(self, event):
         canvas_width = event.width
@@ -290,6 +315,8 @@ class CalendarApp:
             widget.destroy()
 
         search_text = self.search_var.get().lower()
+        if search_text == "🔍  Search": # ignore placeholder text
+            search_text = ""
 
         self.cursor.execute("SELECT id, date, time, title, description, done, reminder_setting FROM events")
         all_events = self.cursor.fetchall()
@@ -322,6 +349,11 @@ class CalendarApp:
                         done_event_dates.add(event_date_obj.day)
 
         self.update_calendar_underlines(visible_event_dates, done_event_dates)
+        
+        # --- Robust Scroller Fix ---
+        # Force geometry to update before getting the bounding box
+        self.event_list_frame.update_idletasks()
+        self.event_list_canvas.configure(scrollregion=self.event_list_canvas.bbox("all"))
 
     def update_calendar_underlines(self, dates_to_underline, done_dates):
         for date_obj, widgets in self.calendar_widgets.items():
@@ -396,10 +428,13 @@ class CalendarApp:
         check_canvas.create_oval(2, 2, 30, 30, outline="#3366ff", width=2)
         check_canvas.create_text(16, 16, text="✓", font=("Arial", 14, "bold"), fill="#3366ff")
         check_canvas.bind("<Button-1>", lambda e, event_id=event_id: self.mark_event_done(event_id))
+        
+        delete_canvas = tk.Canvas(action_col, width=32, height=32, bg="white", highlightthickness=0)
+        delete_canvas.pack(side=tk.LEFT, padx=(0, 10))
+        delete_canvas.create_oval(2, 2, 30, 30, outline="#ff3333", width=2)
+        delete_canvas.create_text(16, 16, text="❌", font=("Arial", 12, "bold"), fill="#ff3333")
+        delete_canvas.bind("<Button-1>", lambda e, event_id=event_id: self.delete_event(event_id))
 
-        delete_label = tk.Label(action_col, text="🗑", bg="white", fg="#ff3333", font=("Arial", 12, "bold"), cursor="hand2")
-        delete_label.pack(side=tk.LEFT)
-        delete_label.bind("<Button-1>", lambda e, event_id=event_id: self.delete_event(event_id))
 
         if event_data["done"]:
             title_label.config(fg="#28a745")
@@ -416,6 +451,7 @@ class CalendarApp:
         date_str = self.event_date_var.get()
         reminder_setting = self.reminder_var.get()
         
+        # --- Check all conditions before trying to create ---
         if title and description and date_str and time and title != "Event Title":
             sql = "INSERT INTO events (title, description, date, time, done, reminder_setting) VALUES (%s, %s, %s, %s, %s, %s)"
             val = (title, description, date_str, time, False, reminder_setting)
@@ -423,15 +459,22 @@ class CalendarApp:
             try:
                 self.cursor.execute(sql, val)
                 self.conn.commit()
+                print("Event successfully created and committed to database.")
                 
                 self.refresh_event_list()
                 
                 self.event_title_var.set("Event Title")
                 self.event_desc_var.set("Event Description")
                 self.reminder_var.set("No Reminder")
-            
+                
             except mysql.connector.Error as err:
+                # This will print the exact database error in your terminal
+                print(f"MySQL Error: {err}")
                 messagebox.showerror("Error", f"Failed to create event: {err}")
+        else:
+            # This will tell you if a field is empty
+            print("Validation failed. One or more fields are empty or the title is the default placeholder.")
+            messagebox.showwarning("Warning", "Please fill in a valid title and description.")
 
     def mark_event_done(self, event_id):
         self.cursor.execute("SELECT done FROM events WHERE id = %s", (event_id,))
@@ -457,7 +500,7 @@ class CalendarApp:
         self.root.destroy()
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = ctk.CTk()
     app = CalendarApp(root)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()
