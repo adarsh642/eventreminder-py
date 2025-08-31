@@ -19,7 +19,10 @@ class CalendarApp:
                 host="photostore.ct0go6um6tj0.ap-south-1.rds.amazonaws.com",
                 user="admin",
                 password="DBpicshot", 
-                database="eventsreminder"
+                database="eventsreminder",
+                connect_timeout=60,
+                read_timeout=60,
+                write_timeout=60
             )
             self.cursor = self.conn.cursor()
             self.create_table()
@@ -35,13 +38,16 @@ class CalendarApp:
         self.event_time_var = tk.StringVar(value=datetime.datetime.now().strftime("%H:%M"))
         self.event_date_var = tk.StringVar(value=datetime.date.today().strftime("%d %b, %Y"))
         self.reminder_var = tk.StringVar(value="No Reminder")
-        self.search_var = tk.StringVar()
+        
+        # Changed this line to start with an empty string
+        self.search_var = tk.StringVar(value="")
+        
         self.current_date = datetime.date.today()
         self.month_label_var = tk.StringVar()
 
-        # State for calendar selection and date underlining
         self.selected_date_canvas_item = None
         self.calendar_widgets = {}
+        self.no_events_label = None
 
         self.setup_styles()
         self.create_main_frames()
@@ -49,7 +55,10 @@ class CalendarApp:
         self.create_right_panel()
         
         self.draw_calendar(self.current_date)
+        
+        # --- This is the key change to ensure events load on startup ---
         self.refresh_event_list()
+
 
     def create_table(self):
         self.cursor.execute("""
@@ -90,8 +99,9 @@ class CalendarApp:
         calendar_header_frame = tk.Frame(self.left_panel, bg="white")
         calendar_header_frame.pack(fill=tk.X, pady=(0, 10))
         
-        self.month_label = tk.Label(calendar_header_frame, textvariable=self.month_label_var, font=("Arial", 16, "bold"), bg="white", fg="#333333")
+        self.month_label = tk.Label(calendar_header_frame, textvariable=self.month_label_var, font=("Arial", 16, "bold"), bg="white", fg="#333333", cursor="hand2")
         self.month_label.pack(side=tk.LEFT)
+        self.month_label.bind("<Button-1>", lambda e: self.toggle_date_selector())
 
         def create_circular_button(parent, text, command):
             canvas = tk.Canvas(parent, width=28, height=28, bg="white", highlightthickness=0)
@@ -149,7 +159,7 @@ class CalendarApp:
         self.search_entry = ctk.CTkEntry(
             header_frame, 
             textvariable=self.search_var, 
-            corner_radius=20, # Increased border radius
+            corner_radius=20,
             width=300, 
             height=40, 
             font=("Arial", 14), 
@@ -161,7 +171,6 @@ class CalendarApp:
         self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_event_list())
         self._setup_search_placeholder()
         
-        # --- Bot Icon (text-based, compatible with all systems) ---
         tk.Label(header_frame, text="🤖", font=("Arial", 24), bg="#e0eeef", fg="#808080").grid(row=0, column=2, sticky="e")
         
         event_list_container = tk.Frame(self.right_panel, bg="white", bd=0, highlightbackground="#e0e0e0", highlightthickness=1)
@@ -181,12 +190,11 @@ class CalendarApp:
         self.event_list_frame.bind("<Configure>", lambda e: self.event_list_canvas.configure(scrollregion=self.event_list_canvas.bbox("all")))
 
         self.event_list_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-    
+
     def _setup_search_placeholder(self):
         self.placeholder_text = "🔍  Search"
-        self.search_entry.insert(0, self.placeholder_text)
-        self.search_entry.configure(text_color="#a0a0a0")
-
+        
+        # This function only adds the placeholder when the entry is empty
         def on_focus_in(event):
             if self.search_entry.get() == self.placeholder_text:
                 self.search_entry.delete(0, "end")
@@ -207,13 +215,53 @@ class CalendarApp:
     def _on_mousewheel(self, event):
         self.event_list_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
-    def draw_calendar(self, date_to_display):
-        self.month_label_var.set(date_to_display.strftime("%B %Y"))
-        
+    def toggle_date_selector(self):
         for widget in self.calendar_grid_frame.winfo_children():
             widget.destroy()
 
+        current_year = self.current_date.year
+        current_month = self.current_date.month
+        
+        month_names = [calendar.month_name[i] for i in range(1, 13)]
+        years = [str(year) for year in range(current_year - 10, current_year + 10)]
+        
+        self.month_var = ctk.StringVar(value=calendar.month_name[current_month])
+        self.year_var = ctk.StringVar(value=str(current_year))
+
+        self.calendar_grid_frame.grid_columnconfigure(0, weight=1)
+        self.calendar_grid_frame.grid_columnconfigure(1, weight=1)
+        
+        ctk.CTkLabel(self.calendar_grid_frame, text="Select Month:", font=("Arial", 12), text_color="#333333").grid(row=0, column=0, pady=(20, 0), padx=5, sticky="ew")
+        self.month_combo = ctk.CTkOptionMenu(self.calendar_grid_frame, variable=self.month_var, values=month_names, font=("Arial", 10), corner_radius=10)
+        self.month_combo.grid(row=1, column=0, pady=5, padx=5, sticky="ew")
+        
+        ctk.CTkLabel(self.calendar_grid_frame, text="Select Year:", font=("Arial", 12), text_color="#333333").grid(row=0, column=1, pady=(20, 0), padx=5, sticky="ew")
+        self.year_combo = ctk.CTkOptionMenu(self.calendar_grid_frame, variable=self.year_var, values=years, font=("Arial", 10), corner_radius=10)
+        self.year_combo.grid(row=1, column=1, pady=5, padx=5, sticky="ew")
+        
+        go_button = ctk.CTkButton(self.calendar_grid_frame, text="Go", command=self.update_from_selector, corner_radius=10, height=35, font=("Arial", 12, "bold"))
+        go_button.grid(row=2, column=0, columnspan=2, pady=(15, 10))
+
+    def update_from_selector(self):
+        selected_month_name = self.month_var.get()
+        selected_year_str = self.year_var.get()
+        
+        if selected_month_name and selected_year_str:
+            selected_month = list(calendar.month_name).index(selected_month_name)
+            selected_year = int(selected_year_str)
+            
+            new_date = datetime.date(selected_year, selected_month, 1)
+            self.current_date = new_date
+            self.draw_calendar(new_date)
+
+    def draw_calendar(self, date_to_display):
+        self.month_label_var.set(date_to_display.strftime("%B %Y"))
+        
         self.calendar_widgets = {}
+
+        for widget in self.calendar_grid_frame.winfo_children():
+            widget.destroy()
+
         week_days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         
         for i, day in enumerate(week_days):
@@ -309,29 +357,41 @@ class CalendarApp:
         self.event_date_var.set(selected_date_str)
 
     def refresh_event_list(self):
-        visible_event_dates = set()
-        done_event_dates = set()
         for widget in self.event_list_frame.winfo_children():
             widget.destroy()
+        
+        if self.no_events_label:
+            self.no_events_label.destroy()
+            self.no_events_label = None
 
         search_text = self.search_var.get().lower()
-        if search_text == "🔍  Search": # ignore placeholder text
+        if search_text == "🔍  Search":
             search_text = ""
 
         self.cursor.execute("SELECT id, date, time, title, description, done, reminder_setting FROM events")
         all_events = self.cursor.fetchall()
         
-        for event_data in all_events:
+        print(f"Fetched {len(all_events)} events from the database.")
+
+        visible_event_dates = set()
+        done_event_dates = set()
+        
+        def safe_datetime_parse(date_str, time_str):
+            try:
+                return datetime.datetime.strptime(f"{date_str} {time_str}", "%d %b, %Y %H:%M")
+            except (ValueError, IndexError):
+                return datetime.datetime.min
+
+        sorted_events = sorted(all_events, key=lambda x: safe_datetime_parse(x[1], x[2]))
+        
+        if not sorted_events:
+            self.no_events_label = tk.Label(self.event_list_frame, text="No events found.", font=("Arial", 12, "italic"), fg="#a0a0a0", bg="white")
+            self.no_events_label.pack(pady=20)
+        
+        for event_data in sorted_events:
             event_id, date_str, time_str, title_str, desc_str, done_int, reminder_str = event_data
             
-            try:
-                event_date_obj = datetime.datetime.strptime(date_str, "%d %b, %Y").date()
-            except (ValueError, KeyError):
-                event_date_obj = None
-
-            is_in_current_month = event_date_obj and event_date_obj.year == self.current_date.year and event_date_obj.month == self.current_date.month
-            
-            if is_in_current_month or search_text in title_str.lower() or search_text in desc_str.lower():
+            if not search_text or search_text in title_str.lower() or search_text in desc_str.lower():
                 self.add_event_to_list(
                     event_id=event_id,
                     event_data={
@@ -343,15 +403,18 @@ class CalendarApp:
                         "reminder": reminder_str
                     }
                 )
-                if is_in_current_month:
+            
+            try:
+                event_date_obj = datetime.datetime.strptime(date_str, "%d %b, %Y").date()
+                if event_date_obj.year == self.current_date.year and event_date_obj.month == self.current_date.month:
                     visible_event_dates.add(event_date_obj.day)
                     if bool(done_int):
                         done_event_dates.add(event_date_obj.day)
-
+            except (ValueError, KeyError):
+                pass
+        
         self.update_calendar_underlines(visible_event_dates, done_event_dates)
         
-        # --- Robust Scroller Fix ---
-        # Force geometry to update before getting the bounding box
         self.event_list_frame.update_idletasks()
         self.event_list_canvas.configure(scrollregion=self.event_list_canvas.bbox("all"))
 
@@ -361,14 +424,16 @@ class CalendarApp:
             text_id = widgets['text_id']
             underline_id = widgets['underline_id']
             
+            if not canvas.winfo_exists():
+                continue
+
             is_in_current_month = date_obj.month == self.current_date.month
             
             if is_in_current_month and date_obj.day in done_dates:
-                # If there's a completed event, draw a green underline
                 bbox = canvas.bbox(text_id)
                 if bbox:
                     x1, y1, x2, y2 = bbox
-                    line_color = "#28a745"  # Green for done events
+                    line_color = "#28a745"
                     if underline_id:
                         canvas.coords(underline_id, x1, y2 + 2, x2, y2 + 2)
                         canvas.itemconfig(underline_id, fill=line_color, width=2)
@@ -376,11 +441,10 @@ class CalendarApp:
                         new_underline_id = canvas.create_line(x1, y2 + 2, x2, y2 + 2, fill=line_color, width=2)
                         widgets['underline_id'] = new_underline_id
             elif is_in_current_month and date_obj.day in dates_to_underline:
-                # If there's an upcoming event, draw a black underline
                 bbox = canvas.bbox(text_id)
                 if bbox:
                     x1, y1, x2, y2 = bbox
-                    line_color = "#333333"  # Black for normal events
+                    line_color = "#333333"
                     if underline_id:
                         canvas.coords(underline_id, x1, y2 + 2, x2, y2 + 2)
                         canvas.itemconfig(underline_id, fill=line_color, width=2)
@@ -388,7 +452,6 @@ class CalendarApp:
                         new_underline_id = canvas.create_line(x1, y2 + 2, x2, y2 + 2, fill=line_color, width=2)
                         widgets['underline_id'] = new_underline_id
             else:
-                # No events for this date, remove any existing underline
                 if underline_id:
                     canvas.delete(underline_id)
                     widgets['underline_id'] = None
@@ -400,15 +463,12 @@ class CalendarApp:
         event_row = tk.Frame(event_wrapper_frame, bg="white")
         event_row.pack(fill=tk.X, padx=0, pady=0)
         
-        # Pack action_col first to anchor it to the right
         action_col = tk.Frame(event_row, bg="white")
         action_col.pack(side=tk.RIGHT, padx=(0, 10))
 
-        # Pack dt_col to the left, next to the action_col
         dt_col = tk.Frame(event_row, bg="white")
         dt_col.pack(side=tk.LEFT, padx=(0, 12))
         
-        # Finally, pack info_col to the left to fill the remaining space
         info_col = tk.Frame(event_row, bg="white")
         info_col.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
@@ -435,7 +495,6 @@ class CalendarApp:
         delete_canvas.create_text(16, 16, text="❌", font=("Arial", 12, "bold"), fill="#ff3333")
         delete_canvas.bind("<Button-1>", lambda e, event_id=event_id: self.delete_event(event_id))
 
-
         if event_data["done"]:
             title_label.config(fg="#28a745")
             desc_label.config(fg="#28a745")
@@ -451,7 +510,6 @@ class CalendarApp:
         date_str = self.event_date_var.get()
         reminder_setting = self.reminder_var.get()
         
-        # --- Check all conditions before trying to create ---
         if title and description and date_str and time and title != "Event Title":
             sql = "INSERT INTO events (title, description, date, time, done, reminder_setting) VALUES (%s, %s, %s, %s, %s, %s)"
             val = (title, description, date_str, time, False, reminder_setting)
@@ -468,11 +526,9 @@ class CalendarApp:
                 self.reminder_var.set("No Reminder")
                 
             except mysql.connector.Error as err:
-                # This will print the exact database error in your terminal
                 print(f"MySQL Error: {err}")
                 messagebox.showerror("Error", f"Failed to create event: {err}")
         else:
-            # This will tell you if a field is empty
             print("Validation failed. One or more fields are empty or the title is the default placeholder.")
             messagebox.showwarning("Warning", "Please fill in a valid title and description.")
 
